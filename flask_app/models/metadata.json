@@ -1,0 +1,100 @@
+{
+  "created_at": "2026-04-22T06:40:19.969453Z",
+  "feature_columns": [
+    "Return_1d",
+    "LogReturn_1d",
+    "SMA_5",
+    "SMA_10",
+    "SMA_20",
+    "Close_over_SMA_5",
+    "Close_over_SMA_10",
+    "Close_over_SMA_20",
+    "Volatility_5",
+    "Volatility_10",
+    "Volatility_20",
+    "Momentum_3",
+    "Momentum_5",
+    "Momentum_10",
+    "RSI_14",
+    "MACD",
+    "MACD_Signal",
+    "MACD_Hist",
+    "BB_Position",
+    "Volume_Ratio",
+    "HL_Range",
+    "Close_Position"
+  ],
+  "lstm_window": 20,
+  "min_rows_required": 30,
+  "tickers_trained_on": [
+    "AAPL",
+    "GOOGL",
+    "MSFT",
+    "JPM",
+    "NVDA",
+    "DIS",
+    "JNJ",
+    "BA",
+    "WMT",
+    "XOM"
+  ],
+  "data_sources": {
+    "yfinance": [
+      "AAPL",
+      "MSFT",
+      "GOOGL",
+      "JPM",
+      "JNJ",
+      "XOM",
+      "WMT",
+      "BA",
+      "DIS",
+      "NVDA"
+    ]
+  },
+  "metrics": {
+    "classification": [
+      {
+        "model": "Logistic Regression",
+        "accuracy": 0.5437837837837838,
+        "precision": 0.5474683544303798,
+        "recall": 0.7178423236514523,
+        "f1": 0.6211849192100538
+      },
+      {
+        "model": "Random Forest Classifier",
+        "accuracy": 0.514054054054054,
+        "precision": 0.5288888888888889,
+        "recall": 0.6172199170124482,
+        "f1": 0.5696505505026328
+      },
+      {
+        "model": "LSTM Classifier",
+        "accuracy": 0.5066666666666667,
+        "precision": 0.5204582651391162,
+        "recall": 0.7361111111111112,
+        "f1": 0.6097794822627037
+      }
+    ],
+    "regression": [
+      {
+        "model": "Linear Regression",
+        "MAE": 1.1700826742313377,
+        "RMSE": 1.6176959223671157,
+        "R2": 0.0004415402166004778
+      },
+      {
+        "model": "Random Forest Regressor",
+        "MAE": 1.1755866882184252,
+        "RMSE": 1.619528692096084,
+        "R2": -0.0018246437089943779
+      },
+      {
+        "model": "LSTM Regressor",
+        "MAE": 1.1941720445133674,
+        "RMSE": 1.6439747151608264,
+        "R2": -0.004950391797643006
+      }
+    ]
+  }
+}
