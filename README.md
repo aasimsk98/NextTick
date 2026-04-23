@@ -1,5 +1,4 @@
-# NextTick
-### Predicting Stock Market Direction and Magnitude Using Machine Learning
+# NextTick — Next-Day Stock Market Forecasting
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-LSTM-red)
@@ -254,7 +253,7 @@ NextTick/
 
 ---
 
-## Tech Stack
+## Part 1 — Train the models (Colab)
 
 | Category | Tools |
 |---|---|
@@ -279,11 +278,9 @@ NextTick/
 ## Installation & Usage
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/NextTick.git
-cd NextTick
-
-# Install dependencies
+cd flask_app
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # Run the notebooks in order
