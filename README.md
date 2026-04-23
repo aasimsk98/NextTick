@@ -1,11 +1,10 @@
 # NextTick
 ### Predicting Stock Market Direction and Magnitude Using Machine Learning
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
+![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-LSTM-red)
-![AWS](https://img.shields.io/badge/AWS-EC2%20%7C%20S3-orange)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-green)
-![XGBoost](https://img.shields.io/badge/XGBoost-Regressor-yellow)
+![Flask](https://img.shields.io/badge/Flask-Web%20App-lightgrey)
 
 ---
 
@@ -13,55 +12,65 @@
 
 **NextTick** is an end-to-end machine learning system that predicts next-day stock market movement using historical price data and engineered financial indicators.
 
-The system addresses two predictive tasks simultaneously:
-- **Classification** — Predict whether a stock will go **UP or DOWN** tomorrow
-- **Regression** — Predict the **percentage magnitude** of that price change
+The system addresses two predictive tasks in parallel:
+- **Classification** - Predict whether a stock will go **UP or DOWN** tomorrow
+- **Regression** - Predict the **percentage magnitude** of that price change
 
-Trained on 10 diverse stocks across tech and finance sectors, the deployed app generalizes to **any ticker** a user types — fetching live market data via `yfinance` at inference time and returning a real-time prediction with a confidence score.
+Trained on 50 stocks across 8 sectors of the S&P 500, the deployed Flask app accepts any ticker a user inputs, fetches live market data via `yfinance` at inference time, computes features on the fly, and returns a real-time prediction.
 
 ---
 
 ## Motivation
 
-Stock market prediction is one of the most studied problems in financial data science. Institutions like Fidelity Investments rely on quantitative research and ML-driven signals to support portfolio management, risk analytics, and investment strategy. NextTick is a mini version of exactly that - a practical, deployable system that demonstrates the full ML lifecycle from raw data to live prediction.
+Stock market prediction is one of the most studied problems in financial data science. Institutions like Fidelity Investments rely on quantitative research and ML-driven signals to support portfolio management, risk analytics, and investment strategy. NextTick is a practical, deployable mini-version of exactly that - a demonstration of the full ML lifecycle from raw data to live prediction through a web interface.
 
 ---
 
 ## Project Architecture
 
 ```
-User types ticker (e.g. "AAPL") on webpage
-            ↓
-Request sent to FastAPI backend (hosted on AWS EC2)
-            ↓
-App fetches latest stock data via yfinance
-            ↓
-Features engineered (SMA, RSI, Momentum, Volatility)
-            ↓
-Trained model loaded from AWS S3
-            ↓
-Inference → "UP — 63% confident, +1.2% magnitude"
-            ↓
-Result displayed on frontend
+User types ticker (e.g. "AAPL") on Flask webpage
+                    |
+                    v
+       Flask backend receives the request
+                    |
+                    v
+       App fetches latest stock data via yfinance
+                    |
+                    v
+       21 features computed (technical + market + OHLCV)
+                    |
+                    v
+       Trained models loaded from disk (.pkl / .pt)
+                    |
+                    v
+       Inference -> direction (UP/DOWN) + magnitude (% change)
+                    |
+                    v
+       Result displayed on frontend
 ```
 
 ---
 
 ## Model Stack
 
-### Classification (Direction - UP / DOWN)
-| Model | Type |
-|---|---|
-| Logistic Regression | Linear baseline |
-| Random Forest Classifier | Robust ensemble |
-| LSTM (PyTorch) | Deep learning - captures temporal sequences |
+Each task is served by three models of increasing sophistication, giving us a linear baseline, a nonlinear ensemble, and a deep sequence model.
 
-### Regression (Magnitude — % change)
-| Model | Type |
-|---|---|
-| Linear Regression | Linear baseline |
-| XGBoost Regressor | Sequential boosting - precise for continuous values |
-| LSTM (PyTorch) | Deep learning - same architecture, continuous output |
+### Classification (Direction - UP / DOWN)
+
+| Model | Type | Framework |
+|---|---|---|
+| Logistic Regression | Linear baseline | scikit-learn |
+| Random Forest Classifier | Tuned tree ensemble | scikit-learn |
+| LSTM Classifier | Stacked recurrent network | PyTorch |
+
+### Regression (Magnitude - % change)
+
+| Model | Type | Framework |
+|---|---|---|
+| Linear Regression | OLS baseline | scikit-learn |
+| Random Forest Regressor | Tuned tree ensemble | scikit-learn |
+| LSTM Regressor | Stacked recurrent network | PyTorch |
 
 ---
 
@@ -70,36 +79,100 @@ Result displayed on frontend
 | Property | Details |
 |---|---|
 | Source | `yfinance` (Yahoo Finance) |
-| Time Span | 5 years of daily data |
-| Tickers | 10 stocks across tech + finance sectors |
-| Total Rows | ~12,500 |
-| Trading Days/Year | ~252 |
-| Classes | 2 (UP, DOWN) |
-| Samples per Class | >500 |
+| Time Span | 5 years of daily data (2021-05-18 to 2026-04-17) |
+| Tickers | 50 stocks across 8 sectors |
+| Total Rows | 61,750 |
+| Rows per Ticker | 1,235 (uniform after warmup / target alignment) |
+| Features | 21 |
 
-**Example Tickers:**
-- Tech: `AAPL`, `MSFT`, `TSLA`, `GOOGL`, `AMZN`
-- Finance: `JPM`, `GS`, `BAC`
+### Universe (50 tickers, 8 sectors)
+
+| Sector | ETF | Tickers |
+|---|---|---|
+| Technology | XLK | AAPL, MSFT, GOOGL, NVDA, CRM, ORCL, ADBE |
+| Consumer Discretionary | XLY | AMZN, TSLA, HD, NKE, MCD, SBUX |
+| Financials | XLF | JPM, GS, BAC, V, MA, BLK |
+| Healthcare | XLV | JNJ, PFE, UNH, LLY, ABBV, MRK, TMO |
+| Energy | XLE | XOM, CVX, COP, SLB, EOG |
+| Industrials | XLI | CAT, BA, HON, UPS, DE, GE |
+| Consumer Staples | XLP | PG, KO, WMT, COST, PEP, PM |
+| Communication Services | XLC | META, NFLX, DIS, VZ, T, CMCSA, TMUS |
 
 ---
 
-## Features
+## Features (21 total)
 
-### Raw Features (from yfinance)
-- Open, High, Low, Close, Volume (OHLCV)
-
-### Engineered Features (via `pandas_ta`)
+### Price / Technical (6)
 | Feature | Description |
 |---|---|
-| SMA (7, 20, 50 day) | Simple Moving Average - smooths price noise |
-| Volatility | Rolling std of daily returns - measures price swings |
-| Momentum | Rate of price change over N days |
-| RSI (0–100) | Relative Strength Index - overbought/oversold signal |
-| Daily Return | % change from previous day's close |
+| `daily_return` | Percent change from previous close |
+| `sma_10`, `sma_20` | 10 and 20-day simple moving averages |
+| `volatility_10` | 10-day rolling standard deviation of returns |
+| `momentum_10` | 10-day price change |
+| `rsi_14` | 14-day Relative Strength Index |
 
-### Labels
-- **Classification:** UP (1) if tomorrow's close > today's close, DOWN (0) otherwise
-- **Regression:** % change between today's close and tomorrow's close
+### Market / Macro (10)
+| Feature | Description |
+|---|---|
+| `spy_return` | Daily return of the broad US equity market (SPY) |
+| `vix_level` | Level of the VIX volatility index |
+| `sector_return` | Daily return of this stock's sector ETF |
+| `relative_to_spy` | Stock return minus SPY return |
+| `relative_to_sector` | Stock return minus sector-ETF return |
+| `tnx_change` | Daily change in the 10-year Treasury yield |
+| `dxy_change` | Daily percent change in the US dollar index |
+| `oil_return` | Daily return of USO (oil proxy) |
+| `day_of_week`, `month` | Calendar features |
+
+### OHLCV-Derived (5)
+| Feature | Description |
+|---|---|
+| `overnight_gap` | Today's open vs yesterday's close |
+| `intraday_return` | Close-vs-open within the same session |
+| `daily_range_pct` | (High - Low) / Close |
+| `close_location` | Where close sits inside the day's range, in [0, 1] |
+| `relative_volume` | Today's volume vs its 20-day mean |
+
+### Targets
+- **`target_direction`** - 1 if tomorrow's close > today's close, else 0
+- **`target_return`** - percent change between today's close and tomorrow's close
+
+---
+
+## Methodology
+
+### Data Split
+Chronological **70/15/15** train/validation/test. Chronological because this is time-series data - training on earlier dates and testing on later ones prevents information leaking from future into past.
+
+### Preprocessing
+A `StandardScaler` fit only on training data is applied uniformly to validation and test. Random Forest doesn't strictly need scaling, but applying it uniformly keeps preprocessing consistent across all six models.
+
+### Hyperparameter Tuning
+Random Forest uses `GridSearchCV` with `TimeSeriesSplit(5)` - expanding-window cross-validation that respects time order, unlike standard k-fold which would shuffle randomly and leak future data.
+
+| Hyperparameter | Grid |
+|---|---|
+| `n_estimators` | 100, 200, 300, 400, 500 |
+| `max_depth` | 5, 10, 20 |
+| `min_samples_leaf` | 5, 10 |
+
+Logistic Regression and Linear Regression use defaults (no tuning).
+
+The LSTM uses a fixed architecture (see below), tuned by extensive prior experimentation.
+
+### LSTM Architecture
+
+```
+Input (batch, 30 timesteps, 21 features)
+  -> LSTM(64, return_sequences=True)
+  -> Dropout(0.2)
+  -> LSTM(32, final hidden state only)
+  -> Dropout(0.2)
+  -> Dense(32 -> 16) + ReLU
+  -> Dense(16 -> 1) + [sigmoid for classification / linear for regression]
+```
+
+Training: Adam optimizer, learning rate 1e-3, batch size 64, up to 30 epochs with early-stopping patience 5 on validation loss. Classification uses BCE loss; regression uses MAE (L1) loss.
 
 ---
 
@@ -107,20 +180,45 @@ Result displayed on frontend
 
 | Task | Metrics |
 |---|---|
-| Classification | Accuracy, Precision, Recall, F1-Score |
-| Regression | MAE (Mean Absolute Error), RMSE (Root Mean Squared Error) |
-
-> **Note:** Time-series cross-validation (`TimeSeriesSplit`) is used throughout - never standard k-fold - to preserve chronological order and prevent data leakage.
+| Classification | Accuracy, Precision, Recall, Macro F1, Confusion Matrix |
+| Regression | MAE (Mean Absolute Error), RMSE, R-squared |
 
 ---
 
-## Deployment (AWS)
+## Results (Test Set)
 
-| Service | Purpose |
+### Classification
+
+| Model | Accuracy | Precision | Recall | Macro F1 |
+|---|---|---|---|---|
+| Logistic Regression | 0.5068 | 0.5097 | 0.8917 | 0.4107 |
+| Random Forest | 0.4991 | 0.5075 | 0.6380 | 0.4873 |
+| **LSTM** | **0.5139** | 0.5171 | 0.6970 | **0.4944** |
+
+Best classifier: **LSTM** (by Macro F1).
+
+### Regression
+
+| Model | MAE | RMSE | R-squared |
+|---|---|---|---|
+| **Linear Regression** | **0.012728** | 0.018346 | -0.0019 |
+| Random Forest | 0.012789 | 0.018404 | -0.0082 |
+| LSTM | 0.013017 | 0.018639 | +0.0019 |
+
+Best regressor: **Linear Regression** (by MAE, narrowly).
+
+---
+
+## Deployment
+
+The trained models are loaded by a Flask web app that takes a user-entered ticker, fetches recent data via `yfinance`, computes the 21 features, and runs inference.
+
+| Component | Details |
 |---|---|
-| AWS S3 | Store raw data CSVs and trained model artifacts |
-| AWS EC2 | Host FastAPI prediction API (always live) |
-| Frontend | Streamlit or HTML webpage for user interaction |
+| Web framework | Flask |
+| Model loading | `pickle` for sklearn models, `torch.load` for PyTorch |
+| Data fetching | `yfinance` at inference time |
+| Preprocessing | Shared `StandardScaler` (same one used during training) |
 
 ---
 
@@ -128,29 +226,30 @@ Result displayed on frontend
 
 ```
 NextTick/
-│
+|
 ├── data/
-│   ├── raw/                    <- Raw stock CSVs downloaded from yfinance
-│   └── processed/              <- Cleaned, feature-engineered datasets
-│
+|   └── processed/
+|       └── nexttick_dataset_50tickers.csv      <- Final dataset (30.2 MB)
+|
 ├── notebooks/
-│   ├── 01_data_pipeline.ipynb  <- Fetch, clean, engineer features
-│   ├── 02_baseline_models.ipynb<- Logistic + Linear Regression
-│   ├── 03_ensemble_models.ipynb<- Random Forest + XGBoost
-│   ├── 04_lstm_model.ipynb     <- LSTM in PyTorch (classification + regression)
-│   └── 05_comparison.ipynb     <- Results, visualizations, analysis
-│
-├── src/
-│   ├── data_pipeline.py        <- Data fetching and cleaning
-│   ├── features.py             <- Feature engineering functions
-│   ├── models.py               <- Model training and saving
-│   └── evaluate.py             <- Evaluation metrics and plots
-│
-├── api/
-│   └── main.py                 <- FastAPI app (inference endpoint)
-│
-├── requirements.txt            <- All dependencies
-└── README.md                   <- You are here
+|   ├── 01_data_pipeline.ipynb                  <- Fetch, clean, engineer features
+|   ├── 02_classification_models.ipynb          <- LogReg + RF + LSTM classifiers
+|   └── 03_regression_models.ipynb              <- LinReg + RF + LSTM regressors
+|
+├── models/
+|   ├── logistic_regression.pkl
+|   ├── random_forest_classifier.pkl
+|   ├── lstm_classifier.pt
+|   ├── linear_regression.pkl
+|   ├── random_forest_regressor.pkl
+|   ├── lstm_regressor.pt
+|   └── scaler.pkl                              <- Shared StandardScaler
+|
+├── app/                                         <- Flask web application
+|   └── ...
+|
+├── requirements.txt
+└── README.md
 ```
 
 ---
@@ -160,35 +259,20 @@ NextTick/
 | Category | Tools |
 |---|---|
 | Data | `yfinance`, `pandas`, `numpy`, `pandas_ta` |
-| ML | `scikit-learn`, `xgboost`, `PyTorch` |
+| ML | `scikit-learn`, `PyTorch` |
 | Visualization | `matplotlib`, `seaborn` |
-| Deployment | `FastAPI`, `AWS EC2`, `AWS S3` |
-| Frontend | `Streamlit` |
+| Web App | `Flask` |
 | Version Control | `Git`, `GitHub` |
 
 ---
 
-## Build Roadmap
+## Build Phases
 
-| No | Phase | Goal |
+| # | Phase | Goal |
 |---|---|---|
-| 1 | Data Pipeline | Fetch, clean, engineer features, save processed CSV |
-| 2 | Baseline Models | Logistic Regression + Linear Regression |
-| 3 | Ensemble Models | Random Forest + XGBoost + TimeSeriesSplit tuning |
-| 4 | LSTM (PyTorch) | Deep learning models for both tasks |
-| 5 | Comparison & Analysis | Results table, visualizations, insights |
-| 6 | AWS Deployment | FastAPI + EC2 + S3 + live frontend |
-
----
-
-## Scaling Plan
-
-| Phase | Tickers | Status |
-|---|---|---|
-| Development | 10 | Start here |
-| Final Training | 20–50 | Scale up if feasible |
-| Stretch Goal | 100+ | Time permitting |
-| Ambitious Stretch | 500+ | If compute allows |
+| 1 | Data Pipeline | Fetch 50 tickers, engineer 21 features, generate targets, save CSV |
+| 2 | Classification Models | Train and compare LogReg, RF Classifier, LSTM Classifier |
+| 3 | Regression Models | Train and compare LinReg, RF Regressor, LSTM Regressor |
 
 ---
 
@@ -202,6 +286,14 @@ cd NextTick
 # Install dependencies
 pip install -r requirements.txt
 
+# Run the notebooks in order
+jupyter notebook notebooks/01_data_pipeline.ipynb
+jupyter notebook notebooks/02_classification_models.ipynb
+jupyter notebook notebooks/03_regression_models.ipynb
+
+# Run the Flask app
+cd app
+flask run
 ```
 
 ---
