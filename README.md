@@ -1,4 +1,4 @@
-# NextTick — Next-Day Stock Market Forecasting
+# NextTick - Next-Day Stock Market Forecasting
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-LSTM-red)
@@ -15,13 +15,13 @@ The system addresses two predictive tasks in parallel:
 - **Classification** - Predict whether a stock will go **UP or DOWN** tomorrow
 - **Regression** - Predict the **percentage magnitude** of that price change
 
-Trained on 50 stocks across 8 sectors of the S&P 500, the project delivers six trained models (three classifiers and three regressors) packaged for use in a Flask web application.
+Trained on 50 stocks across 8 sectors of the S&P 500, the project delivers six trained models (three classifiers and three regressors) served through a Flask web application where a user can enter any ticker and receive a live forecast.
 
 ---
 
 ## Motivation
 
-Stock market prediction is one of the most studied problems in financial data science. NextTick is a practical demonstration of the full ML lifecycle - from raw data ingestion through feature engineering, model training, and evaluation - culminating in trained artifacts ready to be served through a web interface.
+Stock market prediction is one of the most studied problems in financial data science. NextTick is a practical demonstration of the full ML lifecycle - from raw data ingestion through feature engineering, model training, and evaluation - culminating in a web application that serves live predictions to any user.
 
 ---
 
@@ -182,6 +182,30 @@ Best regressor: **Linear Regression** (by MAE, narrowly).
 
 ---
 
+## Inference Flow (How the Flask App Works)
+
+Training is offline and frozen. Inference happens live on every user request. The models' weights are saved once (after running the notebooks) and never modified again - every prediction reuses the same trained artifacts.
+
+When a user types a ticker (e.g. AAPL) and clicks **Run Forecast**:
+
+1. **Fetch** the last ~6 months of OHLCV data for the ticker from Yahoo Finance
+2. **Fetch** market context (SPY, VIX, 10Y Treasury yield, dollar index, oil, and 8 sector ETFs) to compute market/macro features
+3. **Engineer** the 21 features on the fetched data. Each ticker is mapped to its sector ETF (XLK for tech, XLF for financials, etc). Tickers outside the trained 50 fall back to SPY as the sector benchmark.
+4. **Scale** features using the saved `StandardScaler` - the exact same one fit during training
+5. **Run inference**:
+    - Logistic Regression and Random Forest take the **most recent row** (1 x 21 vector) and output P(Up) or predicted return
+    - LSTM takes the **most recent 30 rows** as a sequence (1 x 30 x 21 tensor) and outputs P(Up) or predicted return
+6. **Aggregate** the six predictions:
+    - **Direction:** `"Up"` if the mean of the three classifier probabilities is >= 0.5, else `"Down"`
+    - **Confidence:** `|mean_prob - 0.5| * 2`, scaled to 0-100%
+    - **Magnitude:** arithmetic mean of the three regressor outputs (in percent points)
+    - **Projected close:** `last_close * (1 + magnitude / 100)`
+7. **Return** all numbers to the UI, which renders the headline direction/magnitude cards, a 30-day history chart, the per-model breakdown, and a step-by-step analysis walkthrough
+
+Fetching more than 6 months would not change the prediction - only the last 30 rows are ever fed to the LSTM, and only the last row is fed to LogReg / Random Forest. The 6-month default gives a comfortable buffer for rolling-window warmup and the history chart.
+
+---
+
 ## Repository Structure
 
 ```
@@ -206,11 +230,12 @@ NextTick/
 |   └── scaler.pkl                              <- Shared StandardScaler
 |
 ├── flask_app/                                   <- Flask web application
-|   ├── app.py
+|   ├── app.py                                   <- Flask routes and orchestration
 |   ├── requirements.txt
 |   ├── utils/
-|   |   ├── features.py
-|   |   └── inference.py
+|   |   ├── features.py                          <- 21-feature engineering
+|   |   ├── fetcher.py                           <- Yahoo Finance data fetch + market context
+|   |   └── inference.py                         <- Model loading and prediction
 |   ├── models/                                  <- Trained artifacts dropped here
 |   ├── static/
 |   |   ├── css/style.css
@@ -266,8 +291,34 @@ jupyter notebook notebooks/02_classification_models.ipynb
 jupyter notebook notebooks/03_regression_models.ipynb
 ```
 
+Each notebook saves its trained model artifacts to `models/`.
+
 ### Run the Flask app locally
 
+The Flask app loads the six trained models and serves predictions on a web UI. From the repository root:
+
 ```bash
+# Step 1: Move into the Flask app directory
+cd flask_app
+
+# Step 2: Create and activate a virtual environment
+python -m venv .venv
+
+# On Windows PowerShell:
+.\.venv\Scripts\activate
+
+# On macOS/Linux:
+source .venv/bin/activate
+
+# Step 3: Install Flask app dependencies
+pip install -r requirements.txt
+
+# Step 4: Launch the app
+python app.py
 ```
+
+The app will start on `http://127.0.0.1:5000`. Open it in a browser, search for a stock ticker (e.g. AAPL, TSLA, MSFT), and click **Run Forecast**.
+
+The `flask_app/models/` directory already contains the trained artifacts (`logistic_regression.pkl`, `random_forest_classifier.pkl`, `lstm_classifier.pt`, `linear_regression.pkl`, `random_forest_regressor.pkl`, `lstm_regressor.pt`, `scaler.pkl`) produced by the notebooks. If you retrain the models by running the notebooks, overwrite these files to use the new versions.
+
 ---
