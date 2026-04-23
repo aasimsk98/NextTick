@@ -30,11 +30,11 @@
       </div>
       <div class="meta-cell">
         <span class="meta-k">Features</span>
-        <span class="meta-v">22 engineered indicators</span>
+        <span class="meta-v">21 engineered indicators</span>
       </div>
       <div class="meta-cell">
         <span class="meta-k">LSTM window</span>
-        <span class="meta-v">{{ metadata.lstm_window or 20 }} days</span>
+        <span class="meta-v">{{ metadata.lstm_window or 30 }} days</span>
       </div>
     </div>
   </div>
@@ -44,13 +44,13 @@
 <section class="banner banner--warn">
   <div class="banner-title">Models not loaded</div>
   <p>
-    Run <code>notebooks/NextTick_Training.ipynb</code> in Colab, download the
-    <code>nexttick_artifacts.zip</code> bundle, and unzip it into
-    <code>flask_app/models/</code>. Expected files:
+    Run <code>notebooks/02_classification_models.ipynb</code> and
+    <code>notebooks/03_regression_models.ipynb</code>, then copy the
+    generated artifacts into <code>flask_app/models/</code>. Expected files:
     <code>logistic_regression.pkl</code>, <code>random_forest_classifier.pkl</code>,
     <code>linear_regression.pkl</code>, <code>random_forest_regressor.pkl</code>,
-    <code>lstm_classifier.keras</code>, <code>lstm_regressor.keras</code>,
-    <code>scaler.pkl</code>, <code>metadata.json</code>.
+    <code>lstm_classifier.pt</code>, <code>lstm_regressor.pt</code>,
+    <code>scaler.pkl</code>.
   </p>
 </section>
 {% endif %}

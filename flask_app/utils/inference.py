@@ -2,17 +2,24 @@
 Model loading and inference for NextTick.
 
 Loads six trained models + the fitted scaler, then exposes a single
-``predict(df)`` entry point used by the Flask view layer.
+``predict(df, market_df, ticker)`` entry point used by the Flask view layer.
+
+Models in this build:
+  - Logistic Regression / Random Forest Classifier / LSTM Classifier (PyTorch)
+  - Linear Regression / Random Forest Regressor / LSTM Regressor (PyTorch)
+
+Scaler and sklearn models are pickled. LSTMs are saved as whole-model
+``torch.save`` files (.pt).
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import pickle
 from dataclasses import dataclass, field
 from typing import Optional
 
-import joblib
 import numpy as np
 import pandas as pd
 
@@ -24,27 +31,81 @@ from utils.features import (
 
 logger = logging.getLogger(__name__)
 
-# Lazy-import TensorFlow so the Flask app can still start (and display a
-# friendly error page) when only sklearn artifacts are present.
+# Lazy-import PyTorch so the Flask app can still boot (and display a friendly
+# error page) when TensorFlow-era artifacts are present and PyTorch is not.
 try:
-    from tensorflow.keras.models import load_model as keras_load_model  # type: ignore
+    import torch
+    import torch.nn as nn
+    _HAS_TORCH = True
+except Exception as exc:
+    logger.warning("PyTorch unavailable - LSTM predictions disabled: %s", exc)
+    _HAS_TORCH = False
+    torch = None  # type: ignore
+    nn = None  # type: ignore
 
-    _HAS_TF = True
-except Exception as exc:  # noqa: BLE001
-    logger.warning("TensorFlow unavailable — LSTM predictions disabled: %s", exc)
-    _HAS_TF = False
-    keras_load_model = None  # type: ignore
+
+# PyTorch's ``torch.load`` on a whole-model file requires the model class to be
+# importable at load time. We redefine the exact classes used at training
+# time (Phase 2 and Phase 3 notebooks) so the pickled graphs can be rebuilt.
+if _HAS_TORCH:
+
+    class LSTMClassifier(nn.Module):
+        """Stacked LSTM classifier: LSTM(64) -> LSTM(32) -> Dense(16) -> Dense(1).
+
+        Output is a raw logit; apply sigmoid at inference to get P(Up).
+        """
+        def __init__(self, n_features, hidden_1=64, hidden_2=32,
+                     dense_hidden=16, dropout=0.2):
+            super().__init__()
+            self.lstm1 = nn.LSTM(n_features, hidden_1, batch_first=True)
+            self.dropout1 = nn.Dropout(dropout)
+            self.lstm2 = nn.LSTM(hidden_1, hidden_2, batch_first=True)
+            self.dropout2 = nn.Dropout(dropout)
+            self.dense1 = nn.Linear(hidden_2, dense_hidden)
+            self.relu = nn.ReLU()
+            self.output = nn.Linear(dense_hidden, 1)
+
+        def forward(self, x):
+            lstm1_out, _ = self.lstm1(x)
+            lstm1_out = self.dropout1(lstm1_out)
+            _, (h_n, _) = self.lstm2(lstm1_out)
+            final_hidden = h_n[-1]
+            final_hidden = self.dropout2(final_hidden)
+            h = self.relu(self.dense1(final_hidden))
+            return self.output(h).squeeze(-1)
 
 
-# -------------------------------------------------------------- #
+    class LSTMRegressor(nn.Module):
+        """Same architecture as LSTMClassifier; linear output for regression."""
+        def __init__(self, n_features, hidden_1=64, hidden_2=32,
+                     dense_hidden=16, dropout=0.2):
+            super().__init__()
+            self.lstm1 = nn.LSTM(n_features, hidden_1, batch_first=True)
+            self.dropout1 = nn.Dropout(dropout)
+            self.lstm2 = nn.LSTM(hidden_1, hidden_2, batch_first=True)
+            self.dropout2 = nn.Dropout(dropout)
+            self.dense1 = nn.Linear(hidden_2, dense_hidden)
+            self.relu = nn.ReLU()
+            self.output = nn.Linear(dense_hidden, 1)
+
+        def forward(self, x):
+            lstm1_out, _ = self.lstm1(x)
+            lstm1_out = self.dropout1(lstm1_out)
+            _, (h_n, _) = self.lstm2(lstm1_out)
+            final_hidden = h_n[-1]
+            final_hidden = self.dropout2(final_hidden)
+            h = self.relu(self.dense1(final_hidden))
+            return self.output(h).squeeze(-1)
+
+
 # Data classes
-# -------------------------------------------------------------- #
+
 @dataclass
 class ModelPrediction:
     """Single model's output for one of the two tasks."""
     model: str
     task: str                    # "classification" | "regression"
-    value: float                 # probability of "Up"  OR  predicted % change
+    value: float                 # probability of "Up"  OR  predicted % change (in percent points)
     label: Optional[str] = None  # "Up" / "Down"  for classification
 
 
@@ -57,7 +118,7 @@ class InferenceResult:
     # Ensemble summary
     direction:           Optional[str]   = None  # "Up" / "Down"
     direction_confidence: Optional[float] = None # 0..1
-    magnitude_pct:       Optional[float] = None  # average predicted % change
+    magnitude_pct:       Optional[float] = None  # average predicted % change (percent points)
 
     # Context data echoed back to the UI
     last_close:  Optional[float] = None
@@ -70,42 +131,44 @@ class InferenceResult:
     ensemble_detail:   dict       = field(default_factory=dict)
 
 
-# Human-readable metadata for each engineered feature shown in the UI walkthrough.
+# Human-readable metadata for the 21 features, shown in the UI walkthrough.
+# Keys match FEATURE_COLUMNS exactly.
 _FEAT_META: list[tuple[str, str, str]] = [
-    ("RSI_14",            "RSI (14)",            "Relative Strength Index — momentum oscillator. >70 = overbought, <30 = oversold."),
-    ("MACD",              "MACD",                "EMA(12) − EMA(26). Positive = bullish momentum building."),
-    ("MACD_Signal",       "MACD Signal",         "9-day EMA of MACD. When MACD crosses above this line it is a buy signal."),
-    ("MACD_Hist",         "MACD Histogram",      "MACD − Signal. Positive and rising = strengthening uptrend."),
-    ("BB_Position",       "Bollinger Position",  "Z-score within 2σ Bollinger Bands. >0 = above midline, <0 = below."),
-    ("SMA_5",             "SMA 5",               "5-day simple moving average of close price — short-term trend."),
-    ("SMA_20",            "SMA 20",              "20-day simple moving average — medium-term trend benchmark."),
-    ("Close_over_SMA_5",  "Close / SMA5 − 1",   "% deviation of today's close from the 5-day average."),
-    ("Close_over_SMA_20", "Close / SMA20 − 1",  "% deviation of today's close from the 20-day average."),
-    ("Momentum_5",        "Momentum (5d)",       "5-day price change: Close / Close[−5] − 1."),
-    ("Momentum_10",       "Momentum (10d)",      "10-day price change: Close / Close[−10] − 1."),
-    ("Volatility_5",      "Volatility (5d)",     "5-day rolling standard deviation of daily returns."),
-    ("Volatility_20",     "Volatility (20d)",    "20-day rolling standard deviation of daily returns."),
-    ("Volume_Ratio",      "Volume Ratio",        "Today's volume divided by its 20-day average. >1 = elevated activity."),
-    ("Return_1d",         "1-day Return",        "Previous session's simple daily return (pct_change)."),
-    ("HL_Range",          "H-L Range / Close",   "Intraday range as % of close — a measure of session volatility."),
-    ("Close_Position",    "Close Position",      "Where close sits within the day's High-Low range (0 = Low, 1 = High)."),
+    ("rsi_14",             "RSI (14)",            "Relative Strength Index - momentum oscillator. >70 = overbought, <30 = oversold."),
+    ("sma_10",             "SMA 10",              "10-day simple moving average of close price - short-term trend."),
+    ("sma_20",             "SMA 20",              "20-day simple moving average of close - medium-term trend benchmark."),
+    ("momentum_10",        "Momentum (10d)",      "10-day price change: Close / Close[-10] - 1."),
+    ("volatility_10",      "Volatility (10d)",    "10-day rolling standard deviation of daily returns."),
+    ("daily_return",       "Daily Return",        "Simple daily return: previous session's percentage change."),
+    ("spy_return",         "SPY Return",          "Daily return of the broad US equity market (SPY ETF)."),
+    ("vix_level",          "VIX Level",           "CBOE volatility index - market 'fear gauge'."),
+    ("sector_return",      "Sector Return",       "Daily return of this stock's sector ETF (XLK, XLF, XLV, etc.)."),
+    ("relative_to_spy",    "Relative to SPY",     "Stock return minus SPY return - isolates stock-specific move."),
+    ("relative_to_sector", "Relative to Sector",  "Stock return minus its sector ETF return."),
+    ("tnx_change",         "10Y Yield Change",    "Daily change in the 10-year US Treasury yield."),
+    ("dxy_change",         "Dollar Index Change", "Daily percent change in the US Dollar index (DXY)."),
+    ("oil_return",         "Oil Return",          "Daily return of USO ETF (oil price proxy)."),
+    ("overnight_gap",      "Overnight Gap",       "Today's open relative to yesterday's close, in percent."),
+    ("intraday_return",    "Intraday Return",     "Close vs open within the same session."),
+    ("daily_range_pct",    "H-L Range / Close",   "Intraday range as % of close - a measure of session volatility."),
+    ("close_location",     "Close Position",      "Where close sits within the day's High-Low range (0 = Low, 1 = High)."),
+    ("relative_volume",    "Volume Ratio",        "Today's volume divided by its 20-day average. >1 = elevated activity."),
+    ("day_of_week",        "Day of Week",         "Calendar feature: 0=Monday ... 4=Friday."),
+    ("month",              "Month",               "Calendar feature: 1 ... 12."),
 ]
 
 
-# -------------------------------------------------------------- #
-# Loader
-# -------------------------------------------------------------- #
 class InferenceService:
     """Loads models from ``models_dir`` once and serves predictions."""
 
-    # Filenames produced by the training notebook
+    # Filenames produced by the Phase 2 and Phase 3 notebooks.
     FILES = {
         "logreg":   "logistic_regression.pkl",
         "rf_cls":   "random_forest_classifier.pkl",
         "lin_reg":  "linear_regression.pkl",
         "rf_reg":   "random_forest_regressor.pkl",
-        "lstm_cls": "lstm_classifier.keras",
-        "lstm_reg": "lstm_regressor.keras",
+        "lstm_cls": "lstm_classifier.pt",
+        "lstm_reg": "lstm_regressor.pt",
         "scaler":   "scaler.pkl",
         "metadata": "metadata.json",
     }
@@ -114,8 +177,9 @@ class InferenceService:
         self.models_dir = models_dir
         self.metadata: dict = {}
         self.feature_columns: list[str] = FEATURE_COLUMNS
-        self.lstm_window: int = 20
-        self.min_rows_required: int = 30
+        # Training notebooks used a 30-day window for the LSTMs
+        self.lstm_window: int = 30
+        self.min_rows_required: int = 40  # 30-day window + a few rows of warmup buffer
 
         self.scaler     = None
         self.logreg     = None
@@ -128,40 +192,48 @@ class InferenceService:
         self.status: dict[str, str] = {}
         self._load()
 
-    # ---- internals ------------------------------------------- #
+    # internals
+
     def _path(self, key: str) -> str:
         return os.path.join(self.models_dir, self.FILES[key])
 
-    def _safe_joblib(self, key: str):
+    def _safe_pickle(self, key: str):
+        """Load a pickled sklearn / scaler artifact."""
         p = self._path(key)
         if not os.path.exists(p):
             self.status[key] = "missing"
             logger.warning("Artifact '%s' not found at %s", key, p)
             return None
         try:
-            obj = joblib.load(p)
+            with open(p, "rb") as f:
+                obj = pickle.load(f)
             self.status[key] = "ok"
             return obj
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.status[key] = f"error: {exc}"
             logger.exception("Failed to load %s", p)
             return None
 
-    def _safe_keras(self, key: str):
-        if not _HAS_TF:
-            self.status[key] = "tensorflow-unavailable"
+    def _safe_torch(self, key: str):
+        """Load a whole-model torch.save artifact."""
+        if not _HAS_TORCH:
+            self.status[key] = "torch-unavailable"
             return None
         p = self._path(key)
         if not os.path.exists(p):
             self.status[key] = "missing"
             return None
         try:
-            obj = keras_load_model(p, compile=False)
+            # weights_only=False required for whole-model loads on torch>=2.6.
+            # The model classes (LSTMClassifier / LSTMRegressor) are defined
+            # in this module so pickle can find them.
+            obj = torch.load(p, map_location="cpu", weights_only=False)
+            obj.eval()
             self.status[key] = "ok"
             return obj
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.status[key] = f"error: {exc}"
-            logger.exception("Failed to load Keras model %s", p)
+            logger.exception("Failed to load PyTorch model %s", p)
             return None
 
     def _load(self) -> None:
@@ -170,21 +242,23 @@ class InferenceService:
             with open(meta_path) as f:
                 self.metadata = json.load(f)
             self.feature_columns    = self.metadata.get("feature_columns", FEATURE_COLUMNS)
-            self.lstm_window        = int(self.metadata.get("lstm_window", 20))
-            self.min_rows_required  = int(self.metadata.get("min_rows_required", 30))
+            self.lstm_window        = int(self.metadata.get("lstm_window", 30))
+            self.min_rows_required  = int(self.metadata.get("min_rows_required", 40))
             self.status["metadata"] = "ok"
         else:
-            self.status["metadata"] = "missing"
+            # Metadata is optional - we have sensible defaults above.
+            self.status["metadata"] = "missing-using-defaults"
 
-        self.scaler   = self._safe_joblib("scaler")
-        self.logreg   = self._safe_joblib("logreg")
-        self.rf_cls   = self._safe_joblib("rf_cls")
-        self.lin_reg  = self._safe_joblib("lin_reg")
-        self.rf_reg   = self._safe_joblib("rf_reg")
-        self.lstm_cls = self._safe_keras("lstm_cls")
-        self.lstm_reg = self._safe_keras("lstm_reg")
+        self.scaler   = self._safe_pickle("scaler")
+        self.logreg   = self._safe_pickle("logreg")
+        self.rf_cls   = self._safe_pickle("rf_cls")
+        self.lin_reg  = self._safe_pickle("lin_reg")
+        self.rf_reg   = self._safe_pickle("rf_reg")
+        self.lstm_cls = self._safe_torch("lstm_cls")
+        self.lstm_reg = self._safe_torch("lstm_reg")
 
-    # ---- public ---------------------------------------------- #
+    # public
+
     @property
     def is_ready(self) -> bool:
         """True iff the minimum set of artifacts for a prediction is loaded."""
@@ -196,27 +270,50 @@ class InferenceService:
             and self.rf_reg is not None
         )
 
-    def predict(self, df: pd.DataFrame) -> InferenceResult:
-        """Run all available models on a 30+ day OHLCV frame."""
+    def predict(
+        self,
+        df: pd.DataFrame,
+        market_df: Optional[pd.DataFrame] = None,
+        ticker: Optional[str] = None,
+    ) -> InferenceResult:
+        """Run all available models on a 30+ day OHLCV frame.
+
+        Parameters
+        ----------
+        df : DataFrame
+            User-ticker OHLCV indexed by date.
+        market_df : DataFrame, optional
+            Market context from ``fetcher.fetch_market_context``. Needed to
+            compute the 10 market/macro features.
+        ticker : str, optional
+            Used to choose the correct sector ETF.
+        """
         if not self.is_ready:
             raise RuntimeError(
                 "Models are not loaded. Place the artifacts produced by the "
-                "training notebook into the `models/` directory and restart."
+                "training notebooks into the `models/` directory and restart."
             )
 
         validate_input_frame(df, min_rows=self.min_rows_required)
 
-        # Preserve the original close so we can project tomorrow's price
-        df_sorted = df.sort_index()
+        # The fetcher returns a reset-index DataFrame with a 'Date' column.
+        # Feature engineering expects a DatetimeIndex, so set it back if needed.
+        df_sorted = df.copy()
+        if "Date" in df_sorted.columns:
+            df_sorted = df_sorted.set_index("Date")
+        df_sorted = df_sorted.sort_index()
+
         last_close = float(df_sorted["Close"].iloc[-1])
 
-        feat_df = engineer_features(df_sorted).dropna()
+        # Engineer the 21 features using market context
+        feat_df = engineer_features(df_sorted, market_df=market_df, ticker=ticker).dropna()
         if feat_df.empty:
             raise ValueError(
-                "Feature engineering produced zero usable rows — "
+                "Feature engineering produced zero usable rows - "
                 "the input data likely contains NaNs or too few rows."
             )
 
+        # Scale the most recent row for the non-sequential models
         X_last = self.scaler.transform(
             feat_df[self.feature_columns].iloc[[-1]].values
         )
@@ -234,7 +331,6 @@ class InferenceService:
 
         result = InferenceResult(last_close=last_close)
 
-        # Data summary for the walkthrough UI
         result.data_summary      = {
             "rows":        len(df_sorted),
             "date_from":   str(pd.Timestamp(df_sorted.index[0]).date()),
@@ -247,7 +343,7 @@ class InferenceService:
         }
         result.features_snapshot = features_snapshot
 
-        # ---- Direction (classification) ---------------------- #
+        # Direction (classification)
         p_logreg = float(self.logreg.predict_proba(X_last)[0, 1])
         p_rf_cls = float(self.rf_cls.predict_proba(X_last)[0, 1])
 
@@ -264,9 +360,13 @@ class InferenceService:
             label="Up" if p_rf_cls >= 0.5 else "Down",
         ))
 
-        # ---- Magnitude (regression) -------------------------- #
-        v_lin = float(self.lin_reg.predict(X_last)[0])
-        v_rf  = float(self.rf_reg.predict(X_last)[0])
+        # Magnitude (regression)
+        # Our regressors were trained on ``target_return`` which is a raw fraction
+        # (e.g. 0.015 for +1.5%). The Flask UI expects magnitude in percent
+        # points so it can compute ``next_close = last_close * (1 + mag / 100)``.
+        # We multiply by 100 here so the rest of the pipeline sees percent points.
+        v_lin = float(self.lin_reg.predict(X_last)[0]) * 100.0
+        v_rf  = float(self.rf_reg.predict(X_last)[0])  * 100.0
 
         result.regressions.append(ModelPrediction(
             model="Linear Regression",
@@ -279,14 +379,26 @@ class InferenceService:
             value=v_rf,
         ))
 
-        # ---- LSTM (optional) --------------------------------- #
-        if len(feat_df) >= self.lstm_window and self.lstm_cls is not None and self.lstm_reg is not None:
-            seq = self.scaler.transform(
+        # LSTM (optional - only if enough rows and both torch models loaded)
+        if (_HAS_TORCH
+                and len(feat_df) >= self.lstm_window
+                and self.lstm_cls is not None
+                and self.lstm_reg is not None):
+            # Build a (1, lstm_window, n_features) sequence scaled with the
+            # same fitted scaler used for the sklearn models.
+            seq_np = self.scaler.transform(
                 feat_df[self.feature_columns].tail(self.lstm_window).values
             ).reshape(1, self.lstm_window, -1).astype(np.float32)
 
-            p_lstm = float(self.lstm_cls.predict(seq, verbose=0).flatten()[0])
-            v_lstm = float(self.lstm_reg.predict(seq, verbose=0).flatten()[0])
+            with torch.no_grad():
+                seq_t = torch.from_numpy(seq_np)
+
+                # Classifier outputs a logit - apply sigmoid to get P(Up)
+                logit = self.lstm_cls(seq_t).item()
+                p_lstm = 1.0 / (1.0 + float(np.exp(-logit)))
+
+                # Regressor outputs raw fractional return - scale to percent points
+                v_lstm = self.lstm_reg(seq_t).item() * 100.0
 
             result.classifications.append(ModelPrediction(
                 model="LSTM Classifier",
@@ -300,7 +412,7 @@ class InferenceService:
                 value=v_lstm,
             ))
 
-        # ---- Ensemble summary -------------------------------- #
+        # Ensemble summary
         probs = [p.value for p in result.classifications]
         mags  = [p.value for p in result.regressions]
 
@@ -322,8 +434,8 @@ class InferenceService:
             "total_regressors":   len(result.regressions),
             "avg_prob":           round(avg_prob, 4),
             "avg_mag":            round(avg_mag, 4),
-            "confidence_formula": f"|{avg_prob:.4f} − 0.5| × 2 = {result.direction_confidence:.4f}",
-            "projection_formula": f"${last_close:.2f} × (1 + {avg_mag:.4f} / 100) = ${result.next_close:.2f}",
+            "confidence_formula": f"|{avg_prob:.4f} - 0.5| * 2 = {result.direction_confidence:.4f}",
+            "projection_formula": f"${last_close:.2f} * (1 + {avg_mag:.4f} / 100) = ${result.next_close:.2f}",
         }
 
         # History snapshot for charting (last 30 rows)

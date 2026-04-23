@@ -1,9 +1,9 @@
 """
-NextTick — Flask inference app.
+NextTick - Flask inference app.
 
 Accepts a stock ticker symbol, fetches the last 6 months of OHLCV data
-from Yahoo Finance, runs six trained models, and returns next-day
-direction + magnitude predictions.
+from Yahoo Finance, also fetches market context (SPY/VIX/sector ETFs/macro),
+runs six trained models, and returns next-day direction + magnitude predictions.
 """
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ from dataclasses import asdict
 
 from flask import Flask, jsonify, render_template, request
 
-from utils.fetcher import fetch_ohlcv, fetch_ticker_info, search_tickers
+from utils.fetcher import fetch_market_context, fetch_ohlcv, fetch_ticker_info, search_tickers
 from utils.inference import InferenceService
+from utils.inference import LSTMClassifier, LSTMRegressor
 
-# -------------------------------------------------------------- #
 # Configuration
-# -------------------------------------------------------------- #
+
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 
@@ -29,9 +29,8 @@ logging.basicConfig(
 logger = logging.getLogger("nexttick")
 
 
-# -------------------------------------------------------------- #
 # App factory
-# -------------------------------------------------------------- #
+
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("NEXTTICK_SECRET", "dev-secret-change-me")
@@ -39,9 +38,8 @@ def create_app() -> Flask:
     service = InferenceService(MODELS_DIR)
     logger.info("Artifact status: %s", service.status)
 
-    # ---------------------------------------------------------- #
     # Routes
-    # ---------------------------------------------------------- #
+
     @app.route("/", methods=["GET"])
     def index():
         return render_template(
@@ -70,7 +68,7 @@ def create_app() -> Flask:
         if not ticker:
             return jsonify(error="No ticker symbol provided."), 400
 
-        # ----- fetch live data -------------------------------- #
+        # Fetch live data for the user's ticker
         try:
             df, source = fetch_ohlcv(ticker)
         except RuntimeError as exc:
@@ -79,20 +77,46 @@ def create_app() -> Flask:
             logger.exception("Data fetch failed for %s", ticker)
             return jsonify(error=f"Could not fetch data: {exc}"), 500
 
-        # ----- company metadata ------------------------------- #
+        # Fetch market context (SPY, VIX, sector ETFs, macro) - required by
+        # the model's 21-feature schema
+        try:
+            market_df = fetch_market_context()
+        except Exception as exc:
+            logger.exception("Market context fetch failed")
+            return jsonify(error=f"Could not fetch market context: {exc}"), 500
+
+        # Company metadata
         info = fetch_ticker_info(ticker)
 
-        # ----- inference -------------------------------------- #
+        # Inference - pass the market context and ticker symbol so the feature
+        # pipeline can compute market/macro/sector features for this stock
+        # Inference - pass the market context and ticker symbol so the feature
+        # pipeline can compute market/macro/sector features for this stock
         try:
-            result = service.predict(df)
+            result = service.predict(df, market_df=market_df, ticker=ticker)
         except ValueError as exc:
+            import traceback
+            print("=" * 70)
+            print("ValueError traceback:")
+            print(traceback.format_exc())
+            print("=" * 70)
             return jsonify(error=str(exc)), 400
         except RuntimeError as exc:
+            import traceback
+            print("=" * 70)
+            print("RuntimeError traceback:")
+            print(traceback.format_exc())
+            print("=" * 70)
             return jsonify(error=str(exc)), 503
         except Exception as exc:
+            import traceback
+            print("=" * 70)
+            print("Exception traceback:")
+            print(traceback.format_exc())
+            print("=" * 70)
             logger.exception("Inference failed for %s", ticker)
             return jsonify(error=f"Inference failed: {exc}"), 500
-
+            
         logger.info(
             "Prediction served | ticker=%s source=%s rows=%d direction=%s conf=%.3f mag=%+.3f%%",
             ticker, source, len(df),
@@ -131,4 +155,4 @@ def create_app() -> Flask:
 if __name__ == "__main__":
     app = create_app()
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)

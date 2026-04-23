@@ -1,6 +1,9 @@
 """
 Stock data fetcher for NextTick Flask app.
 Pulls live OHLCV from Yahoo Finance (yfinance) with a Stooq fallback.
+
+Also exposes ``fetch_market_context`` which pulls the market/macro/sector
+instruments NextTick's models need at inference time.
 """
 from __future__ import annotations
 
@@ -10,6 +13,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
 import pandas as pd
+
+from utils.features import MARKET_SYMBOLS
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +87,7 @@ def fetch_ohlcv(
     """
     Fetch `days` trading days of OHLCV for `ticker`.
     Returns (DataFrame, source_name).
-    DataFrame columns: Date, Open, High, Low, Close, Volume — sorted ascending.
+    DataFrame columns: Date, Open, High, Low, Close, Volume - sorted ascending.
     """
     try:
         import yfinance as yf
@@ -122,3 +127,55 @@ def fetch_ohlcv(
         f'Verify the ticker symbol and check your internet connection. '
         f'(Last error: {last_exc})'
     )
+
+
+def fetch_market_context(days: int = TRADING_DAYS_6M) -> pd.DataFrame:
+    """Fetch the market/macro/sector-ETF closes NextTick's models need.
+
+    Returns a DataFrame indexed by date with one column per instrument in
+    ``MARKET_SYMBOLS``. Missing trading days are forward-filled so the
+    feature-engineering step can align with any ticker's calendar.
+
+    If any single instrument fails to download we log and continue - the
+    column will be missing and downstream features derived from it will be
+    NaN (and dropped by the feature pipeline's dropna).
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise RuntimeError("yfinance is not installed. Run: pip install yfinance")
+
+    period_days = max(days * 2, 365)
+    series_map: dict[str, pd.Series] = {}
+
+    for symbol, colname in MARKET_SYMBOLS.items():
+        try:
+            df = yf.Ticker(symbol).history(period=f'{period_days}d', auto_adjust=True)
+            if df.empty:
+                logger.warning("Market symbol %s returned empty frame", symbol)
+                continue
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            s = df['Close'].copy()
+            s.index = pd.to_datetime(s.index)
+            try:
+                s.index = s.index.tz_localize(None)
+            except (AttributeError, TypeError):
+                try:
+                    s.index = s.index.tz_convert(None)
+                except Exception:
+                    pass
+            s = s.sort_index().tail(days)
+            series_map[colname] = s
+        except Exception as exc:
+            logger.warning("Failed to fetch market symbol %s: %s", symbol, exc)
+
+    if not series_map:
+        raise RuntimeError(
+            "Could not fetch any market context data. "
+            "Check your internet connection."
+        )
+
+    market_df = pd.DataFrame(series_map).sort_index().ffill()
+    market_df.index.name = 'Date'
+    return market_df
