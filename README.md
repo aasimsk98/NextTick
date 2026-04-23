@@ -279,7 +279,7 @@ NextTick/
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/NextTick.git
+git clone https://github.com/aasimsk98/NextTick.git
 cd NextTick
 
 # Install dependencies
