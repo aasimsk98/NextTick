@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-eyebrow">
+      <span class="eyebrow-dot"></span>
+      <span>Dual-engine next-day forecasting</span>
+    </div>
+
+    <h1 class="hero-title">
+      Extract <em>actionable signals</em> from volatile market noise.
+    </h1>
+
+    <p class="hero-lede">
+      Search for any stock. Six trained models — logistic regression,
+      random forests, and LSTMs — analyse the last 6 months of live data and
+      predict tomorrow's <span class="accent-up">direction</span> and
+      <span class="accent-mag">magnitude</span>.
+    </p>
+
+    <div class="hero-meta">
+      <div class="meta-cell">
+        <span class="meta-k">Status</span>
+        {% if service_ready %}
+        <span class="meta-v meta-v--ok">Models online</span>
+        {% else %}
+        <span class="meta-v meta-v--warn">Awaiting artifacts</span>
+        {% endif %}
+      </div>
+      <div class="meta-cell">
+        <span class="meta-k">Features</span>
+        <span class="meta-v">22 engineered indicators</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-k">LSTM window</span>
+        <span class="meta-v">{{ metadata.lstm_window or 20 }} days</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if not service_ready %}
+<section class="banner banner--warn">
+  <div class="banner-title">Models not loaded</div>
+  <p>
+    Run <code>notebooks/NextTick_Training.ipynb</code> in Colab, download the
+    <code>nexttick_artifacts.zip</code> bundle, and unzip it into
+    <code>flask_app/models/</code>. Expected files:
+    <code>logistic_regression.pkl</code>, <code>random_forest_classifier.pkl</code>,
+    <code>linear_regression.pkl</code>, <code>random_forest_regressor.pkl</code>,
+    <code>lstm_classifier.keras</code>, <code>lstm_regressor.keras</code>,
+    <code>scaler.pkl</code>, <code>metadata.json</code>.
+  </p>
+</section>
+{% endif %}
+
+<section class="panel" id="upload-panel">
+  <div class="panel-head">
+    <span class="panel-idx">01</span>
+    <h2>Select a stock</h2>
+  </div>
+  <p class="panel-sub">
+    Search by company name or ticker symbol. NextTick fetches the last 6 months
+    of OHLCV data from Yahoo Finance automatically.
+  </p>
+
+  <form id="forecast-form" class="ticker-search-wrap">
+    <div class="ticker-input-wrap">
+      <input type="text" id="ticker-input" class="ticker-input"
+        placeholder="Company name or ticker — e.g. Apple, AAPL, Microsoft, TSLA" autocomplete="off"
+        spellcheck="false" />
+      <div id="ticker-dropdown" class="ticker-dropdown" hidden></div>
+    </div>
+
+    <div id="ticker-selected" class="ticker-selected" hidden>
+      <span class="ticker-sel-symbol" id="ticker-sel-symbol"></span>
+      <span class="ticker-sel-name" id="ticker-sel-name"></span>
+      <span class="ticker-sel-meta" id="ticker-sel-meta"></span>
+      <button type="button" class="link-btn" id="clear-ticker">change</button>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" id="submit-btn" class="btn btn--primary" {% if not service_ready %}disabled{% endif %}>
+        <span class="btn-label">Run forecast</span>
+        <span class="btn-arrow">→</span>
+      </button>
+    </div>
+  </form>
+
+  <div id="error-box" class="error-box" hidden></div>
+</section>
+
+<section class="panel panel--results" id="results-panel" hidden>
+  <div class="panel-head">
+    <span class="panel-idx">02</span>
+    <h2>Forecast</h2>
+    <span class="panel-pill" id="results-filename"></span>
+  </div>
+
+  <div class="headline-grid">
+    <div class="headline-card headline-card--direction" id="direction-card">
+      <div class="card-label">Direction · next session</div>
+      <div class="card-hero">
+        <span id="direction-value" class="card-hero-value">—</span>
+        <span id="direction-arrow" class="card-hero-arrow">↑</span>
+      </div>
+      <div class="card-meta">
+        <span>Ensemble confidence</span>
+        <span class="mono" id="direction-confidence">—</span>
+      </div>
+      <div class="confidence-bar">
+        <div class="confidence-bar-fill" id="confidence-fill"></div>
+      </div>
+    </div>
+
+    <div class="headline-card headline-card--magnitude">
+      <div class="card-label">Magnitude · expected % change</div>
+      <div class="card-hero">
+        <span id="magnitude-value" class="card-hero-value mono">—</span>
+      </div>
+      <div class="card-meta">
+        <span>Projected close</span>
+        <span class="mono">
+          <span id="last-close">—</span>
+          <span class="arrow-sep">→</span>
+          <span id="next-close">—</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div class="results-split">
+    <div class="chart-card">
+      <div class="chart-card-head">
+        <h3>30-day close history</h3>
+        <span class="chart-card-sub">with projected next close</span>
+      </div>
+      <div style="position:relative;height:260px;">
+        <canvas id="history-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="models-card">
+      <div class="chart-card-head">
+        <h3>Per-model breakdown</h3>
+        <span class="chart-card-sub">direction & magnitude</span>
+      </div>
+
+      <div class="models-section">
+        <div class="models-section-title">Direction (P(Up))</div>
+        <ul class="models-list" id="classifications-list"></ul>
+      </div>
+
+      <div class="models-section">
+        <div class="models-section-title">Magnitude (% change)</div>
+        <ul class="models-list" id="regressions-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <div id="workflow-section" class="workflow-section"></div>
+
+  <div class="disclaimer">
+    <strong>Academic project.</strong> NextTick is a machine-learning coursework
+    prototype. Forecasts are illustrative and not investment advice.
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endblock %}
