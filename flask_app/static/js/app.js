@@ -524,37 +524,44 @@
 
   function featSignal(key, value) {
     if (value == null) return { text: '—', sc: '' };
-    if (key === 'RSI_14') {
+    if (key === 'rsi_14') {
       if (value > 70) return { text: 'Overbought', sc: 'down' };
       if (value < 30) return { text: 'Oversold',   sc: 'up'   };
       return { text: 'Neutral', sc: '' };
     }
-    if (['MACD', 'MACD_Signal', 'MACD_Hist'].includes(key)) {
-      return value > 0 ? { text: 'Bullish', sc: 'up' } : { text: 'Bearish', sc: 'down' };
+    if (key === 'vix_level') {
+      if (value > 30) return { text: 'High Fear',  sc: 'down' };
+      if (value < 15) return { text: 'Low Fear',   sc: 'up'   };
+      return { text: 'Moderate', sc: '' };
     }
-    if (key === 'BB_Position') {
-      if (value >  0.8) return { text: 'Near upper band', sc: 'down' };
-      if (value < -0.8) return { text: 'Near lower band', sc: 'up'   };
-      return { text: 'Within bands', sc: '' };
-    }
-    if (['Momentum_5', 'Momentum_10', 'Return_1d', 'Close_over_SMA_5', 'Close_over_SMA_20'].includes(key)) {
-      return value > 0 ? { text: 'Positive', sc: 'up' } : { text: 'Negative', sc: 'down' };
-    }
-    if (key === 'Volume_Ratio') {
+    if (key === 'relative_volume') {
       if (value > 1.5) return { text: 'Elevated', sc: '' };
       if (value < 0.7) return { text: 'Low',      sc: '' };
       return { text: 'Normal', sc: '' };
     }
-    if (key === 'Close_Position') {
+    if (key === 'close_location') {
       if (value > 0.7) return { text: 'Near high', sc: 'up'   };
       if (value < 0.3) return { text: 'Near low',  sc: 'down' };
       return { text: 'Mid-range', sc: '' };
     }
-    if (['Volatility_5', 'Volatility_20'].includes(key)) {
+    if (key === 'daily_range_pct') {
+      return value > 0.03 ? { text: 'Wide', sc: '' } : { text: 'Narrow', sc: '' };
+    }
+    if (key === 'volatility_10') {
       return value > 0.02 ? { text: 'High', sc: '' } : { text: 'Low', sc: '' };
     }
-    if (key === 'HL_Range') {
-      return value > 0.03 ? { text: 'Wide', sc: '' } : { text: 'Narrow', sc: '' };
+    if (['sma_10', 'sma_20'].includes(key)) {
+      return { text: 'Trend Ref', sc: '' };
+    }
+    if (['day_of_week', 'month'].includes(key)) {
+      return { text: 'Calendar', sc: '' };
+    }
+    if ([
+      'momentum_10', 'daily_return', 'spy_return', 'sector_return',
+      'relative_to_spy', 'relative_to_sector', 'tnx_change',
+      'dxy_change', 'oil_return', 'overnight_gap', 'intraday_return',
+    ].includes(key)) {
+      return value > 0 ? { text: 'Positive', sc: 'up' } : { text: 'Negative', sc: 'down' };
     }
     return { text: '—', sc: '' };
   }
