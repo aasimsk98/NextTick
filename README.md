@@ -216,9 +216,10 @@ NextTick/
 |       └── nexttick_dataset_50tickers.csv      <- Final dataset (30.2 MB)
 |
 ├── notebooks/
-|   ├── 01_data_pipeline.ipynb                  <- Fetch, clean, engineer features
-|   ├── 02_classification_models.ipynb          <- LogReg + RF + LSTM classifiers
-|   └── 03_regression_models.ipynb              <- LinReg + RF + LSTM regressors
+|   ├── NextTick_Training.ipynb                 <- Combined end-to-end training notebook
+|   ├── phase01_data_pipeline.ipynb             <- Fetch, clean, engineer features
+|   ├── phase02_classification_models.ipynb     <- LogReg + RF + LSTM classifiers
+|   └── phase03_regression_models.ipynb         <- LinReg + RF + LSTM regressors
 |
 ├── models/
 |   ├── logistic_regression.pkl
@@ -245,7 +246,6 @@ NextTick/
 |       ├── base.html
 |       └── index.html
 |
-├── requirements.txt
 └── README.md
 ```
 
@@ -267,9 +267,9 @@ NextTick/
 
 | # | Phase | Goal |
 |---|---|---|
-| 1 | Data Pipeline | Fetch 50 tickers, engineer 21 features, generate targets, save CSV |
-| 2 | Classification Models | Train and compare LogReg, RF Classifier, LSTM Classifier |
-| 3 | Regression Models | Train and compare LinReg, RF Regressor, LSTM Regressor |
+| 1 | Data Pipeline | Fetch 50 tickers, engineer 21 features, generate targets, save CSV (`phase01_data_pipeline.ipynb`) |
+| 2 | Classification Models | Train and compare LogReg, RF Classifier, LSTM Classifier (`phase02_classification_models.ipynb`) |
+| 3 | Regression Models | Train and compare LinReg, RF Regressor, LSTM Regressor (`phase03_regression_models.ipynb`) |
 
 ---
 
@@ -282,13 +282,13 @@ NextTick/
 git clone https://github.com/aasimsk98/NextTick.git
 cd NextTick
 
-# Install dependencies
-pip install -r requirements.txt
+# Install Flask app dependencies (also covers notebook dependencies)
+pip install -r flask_app/requirements.txt
 
 # Run the notebooks in order
-jupyter notebook notebooks/01_data_pipeline.ipynb
-jupyter notebook notebooks/02_classification_models.ipynb
-jupyter notebook notebooks/03_regression_models.ipynb
+jupyter notebook notebooks/phase01_data_pipeline.ipynb
+jupyter notebook notebooks/phase02_classification_models.ipynb
+jupyter notebook notebooks/phase03_regression_models.ipynb
 ```
 
 Each notebook saves its trained model artifacts to `models/`.
