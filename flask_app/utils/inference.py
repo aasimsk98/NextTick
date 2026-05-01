@@ -250,7 +250,11 @@ class InferenceService:
             self.status["metadata"] = "missing-using-defaults"
 
         self.scaler   = self._safe_pickle("scaler")
-        self.logreg   = self._safe_pickle("logreg")
+        self.logreg = self._safe_pickle("logreg")
+        # sklearn version drift fix > newer sklearn's predict_proba checks multi_class attr
+        # but it gets stripped on pickle load from older versions
+        if self.logreg is not None and not hasattr(self.logreg, "multi_class"):
+            self.logreg.multi_class = "auto"
         self.rf_cls   = self._safe_pickle("rf_cls")
         self.lin_reg  = self._safe_pickle("lin_reg")
         self.rf_reg   = self._safe_pickle("rf_reg")

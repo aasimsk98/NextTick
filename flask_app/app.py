@@ -15,12 +15,24 @@ from flask import Flask, jsonify, render_template, request
 
 from utils.fetcher import fetch_market_context, fetch_ohlcv, fetch_ticker_info, search_tickers
 from utils.inference import InferenceService
+import sys
 from utils.inference import LSTMClassifier, LSTMRegressor
+
+# Register LSTM classes in __main__ namespace > torch.load looks them up there
+sys.modules["__main__"].LSTMClassifier = LSTMClassifier
+sys.modules["__main__"].LSTMRegressor = LSTMRegressor
+from utils.s3_loader import download_models_from_s3
 
 # Configuration
 
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(BASE_DIR, "models")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# S3 config > env-driven for portability local <-> EC2
+S3_BUCKET = os.environ.get("NEXTTICK_S3_BUCKET")
+MODELS_DIR = os.environ.get(
+    "NEXTTICK_MODELS_DIR",
+    os.path.join(BASE_DIR, "models"),
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +46,13 @@ logger = logging.getLogger("nexttick")
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("NEXTTICK_SECRET", "dev-secret-change-me")
+
+    # Pull models from S3 if bucket configured > else use local MODELS_DIR
+    if S3_BUCKET:
+        logger.info("S3 bucket configured: %s > syncing models to %s", S3_BUCKET, MODELS_DIR)
+        download_models_from_s3(bucket=S3_BUCKET, local_dir=MODELS_DIR)
+    else:
+        logger.info("No S3 bucket > using local models from %s", MODELS_DIR)
 
     service = InferenceService(MODELS_DIR)
     logger.info("Artifact status: %s", service.status)
