@@ -4,6 +4,16 @@
 ![PyTorch](https://img.shields.io/badge/PyTorch-LSTM-red)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-green)
 ![Flask](https://img.shields.io/badge/Flask-Web%20App-lightgrey)
+![AWS](https://img.shields.io/badge/AWS-EC2%20%2B%20S3-orange)
+![Docker](https://img.shields.io/badge/Docker-Containerized-blue)
+
+---
+
+## Live Demo
+
+**[http://nexttick.duckdns.org](http://nexttick.duckdns.org)**
+
+Hosted on AWS (EC2 + S3 + IAM, containerized with Docker). See [DEPLOY.md](DEPLOY.md) for the full deployment walkthrough.
 
 ---
 
@@ -231,12 +241,16 @@ NextTick/
 |
 ├── flask_app/                                   <- Flask web application
 |   ├── app.py                                   <- Flask routes and orchestration
-|   ├── requirements.txt
+|   ├── Dockerfile                               <- Container definition (CPU-only torch)
+|   ├── .dockerignore
+|   ├── requirements.txt                         <- Local dev dependencies
+|   ├── requirements-docker.txt                  <- Container dependencies (no torch)
 |   ├── utils/
 |   |   ├── features.py                          <- 21-feature engineering
 |   |   ├── fetcher.py                           <- Yahoo Finance data fetch + market context
-|   |   └── inference.py                         <- Model loading and prediction
-|   ├── models/                                  <- Trained artifacts dropped here
+|   |   ├── inference.py                         <- Model loading and prediction
+|   |   └── s3_loader.py                         <- Boto3-based artifact loader (deploy mode)
+|   ├── models/                                  <- Trained artifacts dropped here (local mode)
 |   ├── static/
 |   |   ├── css/style.css
 |   |   ├── js/app.js
@@ -246,7 +260,8 @@ NextTick/
 |       └── index.html
 |
 ├── requirements.txt
-└── README.md
+├── README.md
+└── DEPLOY.md                                    <- AWS deployment walkthrough
 ```
 
 ---
@@ -258,7 +273,9 @@ NextTick/
 | Data | `yfinance`, `pandas`, `numpy`, `pandas_ta` |
 | ML | `scikit-learn`, `PyTorch` |
 | Visualization | `matplotlib`, `seaborn` |
-| Web App | `Flask` |
+| Web App | `Flask`, `gunicorn` |
+| Container | `Docker` |
+| Cloud | `AWS EC2`, `AWS S3`, `AWS IAM`, `boto3` |
 | Version Control | `Git`, `GitHub` |
 
 ---
@@ -270,12 +287,15 @@ NextTick/
 | 1 | Data Pipeline | Fetch 50 tickers, engineer 21 features, generate targets, save CSV |
 | 2 | Classification Models | Train and compare LogReg, RF Classifier, LSTM Classifier |
 | 3 | Regression Models | Train and compare LinReg, RF Regressor, LSTM Regressor |
+| 4 | Cloud Deployment | Containerize with Docker, deploy to AWS EC2 with S3-backed model artifacts |
 
 ---
 
 ## Installation & Usage
 
-### Train the models
+### Option 1 - Run locally (development)
+
+#### Train the models
 
 ```bash
 # Clone the repository
@@ -293,7 +313,7 @@ jupyter notebook notebooks/03_regression_models.ipynb
 
 Each notebook saves its trained model artifacts to `models/`.
 
-### Run the Flask app locally
+#### Run the Flask app locally
 
 The Flask app loads the six trained models and serves predictions on a web UI. From the repository root:
 
@@ -319,6 +339,24 @@ python app.py
 
 The app will start on `http://127.0.0.1:5000`. Open it in a browser, search for a stock ticker (e.g. AAPL, TSLA, MSFT), and click **Run Forecast**.
 
-The `flask_app/models/` directory already contains the trained artifacts (`logistic_regression.pkl`, `random_forest_classifier.pkl`, `lstm_classifier.pt`, `linear_regression.pkl`, `random_forest_regressor.pkl`, `lstm_regressor.pt`, `scaler.pkl`) produced by the notebooks. If you retrain the models by running the notebooks, overwrite these files to use the new versions.
+The `flask_app/models/` directory should contain the trained artifacts (`logistic_regression.pkl`, `random_forest_classifier.pkl`, `lstm_classifier.pt`, `linear_regression.pkl`, `random_forest_regressor.pkl`, `lstm_regressor.pt`, `scaler.pkl`) produced by the notebooks. If you retrain the models, overwrite these files to use the new versions.
+
+#### Run with Docker locally (optional)
+
+```bash
+cd flask_app
+docker build -t nexttick:local .
+
+# With local model files mounted
+docker run --rm -p 5000:5000 \
+  -v $(pwd)/models:/app/models \
+  nexttick:local
+```
+
+Visit `http://localhost:5000`.
+
+### Option 2 - Deploy to AWS
+
+See **[DEPLOY.md](DEPLOY.md)** for the complete AWS deployment walkthrough (EC2 + S3 + IAM + Docker). Stays within AWS Free Tier.
 
 ---
